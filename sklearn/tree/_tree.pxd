@@ -81,6 +81,7 @@ cdef class Splitter:
     cdef SIZE_t* samples                 # Sample indices in X, y
     cdef SIZE_t n_samples                # X.shape[0]
     cdef double weighted_n_samples       # Weighted number of samples
+    cdef DOUBLE_t* feature_weight        # weights of features   
     cdef SIZE_t* features                # Feature indices in X
     cdef SIZE_t* constant_features       # Constant features indices
     cdef SIZE_t n_features               # X.shape[1]
@@ -112,7 +113,7 @@ cdef class Splitter:
     # This allows optimization with depth-based tree building.
 
     # Methods
-    cdef void init(self, np.ndarray X, np.ndarray y, DOUBLE_t* sample_weight)
+    cdef void init(self, np.ndarray X, np.ndarray y, DOUBLE_t* sample_weight, DOUBLE_t* feature_weight)
 
     cdef void node_reset(self, SIZE_t start, SIZE_t end,
                          double* weighted_n_node_samples) nogil
@@ -125,7 +126,8 @@ cdef class Splitter:
                          double* impurity_left,
                          double* impurity_right,
                          double* impurity_improvement,
-                         SIZE_t* n_constant_features) nogil
+                         SIZE_t* n_constant_features,
+                         double* feature_weight) nogil
 
     cdef void node_value(self, double* dest) nogil
 
@@ -202,4 +204,4 @@ cdef class TreeBuilder:
     cdef SIZE_t max_depth           # Maximal tree depth
 
     cpdef build(self, Tree tree, np.ndarray X, np.ndarray y,
-                np.ndarray sample_weight=*)
+                np.ndarray sample_weight=*,np.ndarray feature_weight=*)

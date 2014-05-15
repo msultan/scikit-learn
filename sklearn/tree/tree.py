@@ -91,7 +91,7 @@ class BaseDecisionTree(six.with_metaclass(ABCMeta, BaseEstimator,
         self.max_features_ = None
 
     def fit(self, X, y, sample_mask=None, X_argsorted=None, check_input=True,
-            sample_weight=None):
+            sample_weight=None,feature_weight=np.ones(self.n_features_)):
         """Build a decision tree from the training set (X, y).
 
         Parameters
@@ -111,6 +111,9 @@ class BaseDecisionTree(six.with_metaclass(ABCMeta, BaseEstimator,
             ignored while searching for a split in each node. In the case of
             classification, splits are also ignored if they would result in any
             single class carrying a negative weight in either child node.
+
+        feature_weight: array-like,shape = [n_features] that defaults to 1. 
+        Every possible split is divided by its feature weight as a scaling factor. 
 
         check_input : boolean, (default=True)
             Allow to bypass several input checking.

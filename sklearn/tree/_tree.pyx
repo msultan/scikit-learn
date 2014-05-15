@@ -940,7 +940,8 @@ cdef class Splitter:
     cdef void init(self,
                    np.ndarray[DTYPE_t, ndim=2] X,
                    np.ndarray[DOUBLE_t, ndim=2, mode="c"] y,
-                   DOUBLE_t* sample_weight) except *:
+                   DOUBLE_t* sample_weight,
+                   DOUBLE_t* feature_weight) except *:
         """Initialize the splitter."""
         # Reset random state
         self.rand_r_state = self.random_state.randint(0, RAND_R_MAX)
@@ -1006,7 +1007,8 @@ cdef class Splitter:
                          double* threshold, double* impurity_left,
                          double* impurity_right,
                          double* impurity_improvement,
-                         SIZE_t* n_constant_features) nogil:
+                         SIZE_t* n_constant_features,
+                         double* feature_weight) nogil:
         """Find a split on node samples[start:end]."""
         pass
 
@@ -1031,7 +1033,7 @@ cdef class BestSplitter(Splitter):
                          double* threshold, double* impurity_left,
                          double* impurity_right,
                          double* impurity_improvement,
-                         SIZE_t* n_constant_features) nogil:
+                         SIZE_t* n_constant_features, double* feature_weight) nogil:
         """Find the best split on node samples[start:end]."""
         # Find the best split
         cdef SIZE_t* samples = self.samples
@@ -1171,7 +1173,7 @@ cdef class BestSplitter(Splitter):
 
                             self.criterion.update(current_pos)
                             current_improvement = self.criterion.impurity_improvement(impurity)
-
+                            current_improvement =  current_improvement / feature_weight[f_j]
                             if current_improvement > best_improvement:
                                 self.criterion.children_impurity(&current_impurity_left,
                                                                  &current_impurity_right)
@@ -1347,7 +1349,8 @@ cdef class RandomSplitter(Splitter):
                          double* threshold, double* impurity_left,
                          double* impurity_right,
                          double* impurity_improvement,
-                         SIZE_t* n_constant_features) nogil:
+                         SIZE_t* n_constant_features,
+                         double* feature_weight) nogil:
         """Find the best random split on node samples[start:end]."""
         # Draw random splits and pick the best
         cdef SIZE_t* samples = self.samples
@@ -1585,11 +1588,12 @@ cdef class PresortBestSplitter(Splitter):
     cdef void init(self,
                    np.ndarray[DTYPE_t, ndim=2] X,
                    np.ndarray[DOUBLE_t, ndim=2, mode="c"] y,
-                   DOUBLE_t* sample_weight):
+                   DOUBLE_t* sample_weight,
+                   DOUBLE_t* feature_weight):
         cdef void* sample_mask = NULL
 
         # Call parent initializer
-        Splitter.init(self, X, y, sample_weight)
+        Splitter.init(self, X, y, sample_weight,feature_weight)
 
         # Pre-sort X
         if self.X_old != self.X:
@@ -1608,7 +1612,8 @@ cdef class PresortBestSplitter(Splitter):
                          double* threshold, double* impurity_left,
                          double* impurity_right,
                          double* impurity_improvement,
-                         SIZE_t* n_constant_features) nogil:
+                         SIZE_t* n_constant_features,
+                         double* feature_weight) nogil:
         """Find the best split on node samples[start:end]."""
         # Find the best split
         cdef SIZE_t* samples = self.samples
@@ -1822,7 +1827,7 @@ cdef class TreeBuilder:
     """Interface for different tree building strategies. """
 
     cpdef build(self, Tree tree, np.ndarray X, np.ndarray y,
-                np.ndarray sample_weight=None):
+                np.ndarray sample_weight=None,np.ndarray feature_weight = None):
         """Build a decision tree from the training set (X, y)."""
         pass
 
@@ -1840,7 +1845,7 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
         self.max_depth = max_depth
 
     cpdef build(self, Tree tree, np.ndarray X, np.ndarray y,
-                np.ndarray sample_weight=None):
+                np.ndarray sample_weight=None,np.ndarray feature_weight=None):
         """Build a decision tree from the training set (X, y)."""
         # check if dtype is correct
         if X.dtype != DTYPE:
@@ -1851,13 +1856,17 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
             y = np.ascontiguousarray(y, dtype=DOUBLE)
 
         cdef DOUBLE_t* sample_weight_ptr = NULL
+        cdef DOUBLE_t* feature_weight_ptr =NULL
+
         if sample_weight is not None:
             if ((sample_weight.dtype != DOUBLE) or
                     (not sample_weight.flags.contiguous)):
                 sample_weight = np.asarray(sample_weight,
                                            dtype=DOUBLE, order="C")
             sample_weight_ptr = <DOUBLE_t*> sample_weight.data
-
+        
+        #pointer to the feature_weights 
+        feature_weight_ptr = <DOUBLE_t*> feature_weight.data
         # Initial capacity
         cdef int init_capacity
 
@@ -1875,7 +1884,7 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
         cdef SIZE_t min_samples_split = self.min_samples_split
 
         # Recursive partition (without actual recursion)
-        splitter.init(X, y, sample_weight_ptr)
+        splitter.init(X, y, sample_weight_ptr,feature_weight_ptr)
 
         cdef SIZE_t start
         cdef SIZE_t end
@@ -1938,7 +1947,8 @@ cdef class DepthFirstTreeBuilder(TreeBuilder):
                                         &split_impurity_left,
                                         &split_impurity_right,
                                         &split_improvement,
-                                        &n_constant_features)
+                                        &n_constant_features,
+                                        feature_weight_ptr)
                     is_leaf = is_leaf or (pos >= end)
 
                 node_id = tree._add_node(parent, is_left, is_leaf, feature,
@@ -2007,7 +2017,7 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
         self.max_leaf_nodes = max_leaf_nodes
 
     cpdef build(self, Tree tree, np.ndarray X, np.ndarray y,
-                np.ndarray sample_weight=None):
+                np.ndarray sample_weight=None,np.ndarray feature_weight=None):
         """Build a decision tree from the training set (X, y)."""
         # Check if dtype is correct
         if X.dtype != DTYPE:
@@ -2018,13 +2028,15 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
             y = np.ascontiguousarray(y, dtype=DOUBLE)
 
         cdef DOUBLE_t* sample_weight_ptr = NULL
+        cdef DOUBLE_t* feature_weight_ptr =NULL
         if sample_weight is not None:
             if ((sample_weight.dtype != DOUBLE) or
                     (not sample_weight.flags.contiguous)):
                 sample_weight = np.asarray(sample_weight,
                                            dtype=DOUBLE, order="C")
             sample_weight_ptr = <DOUBLE_t*> sample_weight.data
-
+        
+        feature_weight_ptr = <DOUBLE_t*> feature_weight.data
         # Parameters
         cdef Splitter splitter = self.splitter
         cdef SIZE_t max_leaf_nodes = self.max_leaf_nodes
@@ -2032,7 +2044,7 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
         cdef SIZE_t min_samples_split = self.min_samples_split
 
         # Recursive partition (without actual recursion)
-        splitter.init(X, y, sample_weight_ptr)
+        splitter.init(X, y, sample_weight_ptr,feature_weight_ptr)
 
         cdef PriorityHeap frontier = PriorityHeap(INITIAL_STACK_SIZE)
         cdef PriorityHeapRecord record
@@ -2054,7 +2066,7 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
             # add root to frontier
             rc = self._add_split_node(splitter, tree, 0, n_node_samples,
                                       INFINITY, IS_FIRST, IS_LEFT, NULL, 0,
-                                      &split_node_left)
+                                      &split_node_left,feature_weight_ptr)
             if rc >= 0:
                 rc = _add_to_frontier(&split_node_left, frontier)
         if rc == -1:
@@ -2086,7 +2098,7 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
                                               record.impurity_left,
                                               IS_NOT_FIRST, IS_LEFT, node,
                                               record.depth + 1,
-                                              &split_node_left)
+                                              &split_node_left,feature_weight_ptr)
                     if rc == -1:
                         break
 
@@ -2098,8 +2110,8 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
                                               record.end,
                                               record.impurity_right,
                                               IS_NOT_FIRST, IS_NOT_LEFT, node,
-                                              record.depth + 1,
-                                              &split_node_right)
+                                              record.depth + 1, 
+                                              &split_node_right,feature_weight_ptr)
                     if rc == -1:
                         break
 
@@ -2128,7 +2140,7 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
                                     SIZE_t start, SIZE_t end, double impurity,
                                     bint is_first, bint is_left, Node* parent,
                                     SIZE_t depth,
-                                    PriorityHeapRecord* res) nogil:
+                                    PriorityHeapRecord* res,double* feature_weight_ptr) nogil:
         """Adds node w/ partition ``[start, end)`` to the frontier. """
         cdef SIZE_t pos
         cdef SIZE_t feature
@@ -2154,11 +2166,12 @@ cdef class BestFirstTreeBuilder(TreeBuilder):
                    (n_node_samples < self.min_samples_split) or
                    (n_node_samples < 2 * self.min_samples_leaf) or
                    (impurity <= MIN_IMPURITY_SPLIT))
-
+        
+        
         if not is_leaf:
             splitter.node_split(impurity, &pos, &feature, &threshold,
                                 &split_impurity_left, &split_impurity_right,
-                                &split_improvement, &n_constant_features)
+                                &split_improvement, &n_constant_features, feature_weight_ptr)
             is_leaf = is_leaf or (pos >= end)
 
         node_id = tree._add_node(parent - tree.nodes
